@@ -1,0 +1,30 @@
+{
+  "name": "dsh-plugin-web-notify",
+  "version": "0.1.0",
+  "description": "Browser notifications for DeepSeek Harness: turn completion, approvals, plan reviews, and questions.",
+  "license": "MIT",
+  "author": "vilicvane",
+  "type": "module",
+  "files": [
+    "index.js",
+    "client.js"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-runtime"],
+      "immediately": true
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "notification"
+  ]
+}

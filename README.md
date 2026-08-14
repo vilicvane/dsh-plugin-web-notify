@@ -60,7 +60,7 @@ The `config` block is optional and defaults to `deepseek-official` /
 | `provider` | `deepseek-official` | LLM provider route used for summaries. |
 | `model` | `deepseek-chat` | Small/fast model used for summaries. |
 | `maxInputChars` | `4000` | Cap on the turn text (user request + assistant reply) sent to the model. |
-| `maxOutputTokens` | `100` | Cap on the summary length. |
+| `maxOutputTokens` | `150` | Cap on the summary length. |
 | `timeoutMs` | `60000` | Summary generation timeout. |
 | `systemPrompt` | (built-in) | System prompt for the summarization call. |
 
@@ -69,18 +69,22 @@ notification permission.
 
 ## How it works
 
-- `index.js` (host half) subscribes to `session/event` to accumulate each
-  turn's user/assistant text, and registers a `/web-notify/summary` route on
-  the DSH web server. When the browser half requests a summary, the host
-  streams a call to the configured small model (`ctx.llm.stream`) and caches
-  the one-sentence result per session.
+- `index.js` (host half) registers `/web-notify/summary` and
+  `/web-notify/capability` routes on the DSH web server. On a summary request
+  it reads the finished turn's user/assistant text on demand from the
+  in-memory session store (`ctx.sessions`), then streams a call to the
+  configured small model (`ctx.llm.stream`, with the `session-title` purpose
+  so the provider disables model thinking and the token budget goes to the
+  summary text) and caches the one-sentence result per session.
 - `client.js` (client half) is a Cordis client plugin. It injects the
   `sessions` service and watches the session-list snapshot for
   `running → false` transitions and for `pendingInteraction`
-  (`approval` / `plan-review` / `question`) arrivals. Completion
-  notifications start as the plain text and poll the host route; the summary
-  replaces the plain notification (same tag) once ready. On the summary
-  failing or timing out, the plain notification stays.
+  (`approval` / `plan-review` / `question`) arrivals. It probes the
+  capability route at apply (and again after server connection resets), so
+  completion notifications start with a "summarizing…" hint only when the
+  host summary is actually available. The client polls the summary route;
+  the summary replaces the hint (same tag) once ready, and failures degrade
+  back to the plain completion text.
 
 ## Notes
 

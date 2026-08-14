@@ -20,7 +20,20 @@ Shows a browser notification when:
 
 ## Install
 
-Add the plugin to your dsh profile and register it in the Loader:
+Add the plugin to your dsh profile and register it in the Loader.
+
+### From GitHub
+
+```sh
+dsh plugin --profile web add github:vilicvane/dsh-plugin-web-notify
+```
+
+This is equivalent to running `pnpm add github:vilicvane/dsh-plugin-web-notify`
+inside the profile directory.
+
+### From npm
+
+Once the package is published to the npm registry:
 
 ```sh
 dsh plugin --profile web add dsh-plugin-web-notify

@@ -10,6 +10,7 @@ Shows a browser notification when:
 ## Features
 
 - **Click to focus** — clicking the notification brings the GUI window to the front.
+- **Stays until dismissed** — notifications use `requireInteraction` and stay on screen until you click or dismiss them (set the `REQUIRE_INTERACTION` constant in `client.js` to `false` for the OS default auto-dismiss timing).
 - **Chime** — plays a short two-tone sound along with the notification (browsers allow page audio after the page has been interacted with at least once).
 - **No interruptions** — no notification while the page is focused on the finished/asking session; you already see it.
 - **One toast per session** — notifications for the same session replace each other instead of stacking.
@@ -54,6 +55,9 @@ notification permission.
   only, no banner, no sound). Check **Windows Settings → System →
   Notifications → Google Chrome** and enable "Show notification banners" and
   "Play a sound"; also make sure Focus Assist is off.
+- Browsers do not expose a configurable auto-dismiss duration; the operating
+  system controls it. This plugin uses `requireInteraction` so notifications
+  stay visible until clicked or dismissed.
 - The chime is subject to the browser autoplay policy: it plays only after
   the page has been interacted with at least once.
 - Bringing a window to the front without a user gesture is restricted by

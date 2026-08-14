@@ -14,6 +14,15 @@ window.__ModuleLoader__.load({
      */
     const name = 'web-notify';
 
+    /**
+     * Whether notifications stay on screen until the user clicks or dismisses
+     * them. Browsers do not expose a configurable auto-dismiss duration — the
+     * operating system controls it — so `requireInteraction` is the only way
+     * to keep a notification visible for longer. Set to false for the OS
+     * default auto-dismiss timing.
+     */
+    const REQUIRE_INTERACTION = true;
+
     const language =
       typeof navigator === 'undefined' ? '' : navigator.language ?? '';
     const isChinese = /^zh\b/i.test(language);
@@ -135,6 +144,7 @@ window.__ModuleLoader__.load({
               body,
               tag: `dsh-session-${summary.id}`,
               silent: false,
+              requireInteraction: REQUIRE_INTERACTION,
             });
 
             playChime();

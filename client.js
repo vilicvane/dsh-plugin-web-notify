@@ -10,7 +10,8 @@ window.__ModuleLoader__.load({
      * Web notification plugin, client half: fires a browser notification
      * when a session's turn finishes or when a session starts waiting for the
      * user (approval, plan review, or a question) while the user is not
-     * watching it.
+     * watching it. Completion notifications are upgraded to a host-generated
+     * small-model summary when one becomes available.
      */
     const name = 'web-notify';
 
@@ -30,6 +31,7 @@ window.__ModuleLoader__.load({
     const STRINGS = isChinese
       ? {
           completed: '对话已完成',
+          summarizing: '对话已完成 · 正在总结…',
           pending: {
             approval: '有一个授权请求等待处理',
             'plan-review': '有一个计划等待你的确认',
@@ -39,6 +41,7 @@ window.__ModuleLoader__.load({
         }
       : {
           completed: 'Conversation finished',
+          summarizing: 'Conversation finished · summarizing…',
           pending: {
             approval: 'An approval request is waiting for you',
             'plan-review': 'A plan is waiting for your review',
@@ -128,13 +131,13 @@ window.__ModuleLoader__.load({
           }
         };
 
-        const notifySession = (summary, body) => {
+        const showNotification = (summary, body, withChime) => {
           if (!('Notification' in window)) {
-            return;
+            return undefined;
           }
 
           if (Notification.permission !== 'granted') {
-            return;
+            return undefined;
           }
 
           try {
@@ -147,11 +150,14 @@ window.__ModuleLoader__.load({
               requireInteraction: REQUIRE_INTERACTION,
             });
 
-            playChime();
+            if (withChime) {
+              playChime();
+            }
 
             // Clicking the toast is a user gesture: focusing the GUI window
-            // is allowed here.
+            // and switching to the finished session are both allowed here.
             notification.onclick = () => {
+              sessions.open(summary.id);
               window.focus();
               notification.close();
             };
@@ -160,9 +166,93 @@ window.__ModuleLoader__.load({
             // ignore window.focus() without a user gesture, so the click
             // handler above is the reliable path.
             window.focus();
+
+            return notification;
           } catch {
             // Notifications must never affect the GUI.
+            return undefined;
           }
+        };
+
+        const SUMMARY_PATH = '/web-notify/summary';
+        const CAPABILITY_PATH = '/web-notify/capability';
+        const SUMMARY_POLL_COUNT = 8;
+        const SUMMARY_POLL_INTERVAL_MS = 1_500;
+
+        const summaryTimerSet = new Set();
+
+        const scheduleSummaryTimer = callback => {
+          const id = window.setTimeout(() => {
+            summaryTimerSet.delete(id);
+            callback();
+          }, SUMMARY_POLL_INTERVAL_MS);
+
+          summaryTimerSet.add(id);
+        };
+
+        // Whether the host half can summarize turns. Probed at apply and
+        // self-heals: a probe that ran before the host half was deployed (or
+        // before a server restart) must not stick as "unavailable" forever.
+        let summaryCapable = false;
+
+        const probeSummaryCapability = () => {
+          fetch(CAPABILITY_PATH)
+            .then(response => response.json())
+            .then(result => {
+              summaryCapable =
+                result !== null &&
+                typeof result === 'object' &&
+                result.summary === true;
+            })
+            .catch(() => undefined);
+        };
+
+        probeSummaryCapability();
+
+        // The connection resets when the dsh web server restarts; the new
+        // process may mount the summary route, so probe again.
+        const disposeResetListener = ctx.on('connection/reset', () => {
+          probeSummaryCapability();
+        });
+
+        // Replaces the completion notification with the host-generated
+        // small-model summary once it is ready; when it never becomes ready,
+        // the "summarizing" hint degrades back to the plain text.
+        const requestTurnSummary = summary => {
+          let attempts = 0;
+
+          const poll = () => {
+            attempts++;
+
+            if (attempts > SUMMARY_POLL_COUNT) {
+              showNotification(summary, STRINGS.completed, false);
+              return;
+            }
+
+            fetch(
+              `${SUMMARY_PATH}?sessionId=${encodeURIComponent(summary.id)}`,
+            )
+              .then(response => response.json())
+              .then(result => {
+                if (
+                  result === null ||
+                  typeof result !== 'object' ||
+                  result.ready !== true ||
+                  typeof result.summary !== 'string'
+                ) {
+                  scheduleSummaryTimer(poll);
+                  return;
+                }
+
+                // Same tag replaces the plain notification.
+                showNotification(summary, result.summary, false);
+              })
+              .catch(() => {
+                scheduleSummaryTimer(poll);
+              });
+          };
+
+          scheduleSummaryTimer(poll);
         };
 
         const isWatchingSession = (id, current) => {
@@ -190,10 +280,11 @@ window.__ModuleLoader__.load({
               summary.pendingInteraction !== undefined
             ) {
               if (!isWatchingSession(id, current)) {
-                notifySession(
+                showNotification(
                   summary,
                   STRINGS.pending[summary.pendingInteraction] ??
                     STRINGS.pendingFallback,
+                  true,
                 );
               }
 
@@ -210,7 +301,18 @@ window.__ModuleLoader__.load({
               continue;
             }
 
-            notifySession(summary, STRINGS.completed);
+            const notification = showNotification(
+              summary,
+              summaryCapable ? STRINGS.summarizing : STRINGS.completed,
+              true,
+            );
+
+            if (notification !== undefined && summaryCapable) {
+              requestTurnSummary(summary);
+            } else if (!summaryCapable) {
+              // Lazy self-heal: the next completion gets the summary flow.
+              probeSummaryCapability();
+            }
           }
         });
 
@@ -224,9 +326,16 @@ window.__ModuleLoader__.load({
 
         scope.effect(() => () => {
           unsubscribe();
+          disposeResetListener();
           window.removeEventListener('pointerdown', handlePointerDown, {
             capture: true,
           });
+
+          for (const id of summaryTimerSet) {
+            window.clearTimeout(id);
+          }
+
+          summaryTimerSet.clear();
         });
       });
     }

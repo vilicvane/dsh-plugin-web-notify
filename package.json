@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-web-notify",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Browser notifications for DeepSeek Harness: turn completion, approvals, plan reviews, and questions.",
   "license": "MIT",
   "author": "vilicvane",

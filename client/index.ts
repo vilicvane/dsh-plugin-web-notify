@@ -5,6 +5,8 @@ import type {
   SessionSummary,
 } from '@deepseek-ai/dsh-client-runtime/client';
 
+import type { WebNotifyRequest } from '../lib/types.ts';
+
 const SUMMARY_PATH = '/web-notify/summary';
 const CAPABILITY_PATH = '/web-notify/capability';
 const REQUIRE_INTERACTION = true;
@@ -88,6 +90,18 @@ function failedSummary(value: unknown): boolean {
   return isRecord(value) && value.ready === false && typeof value.error === 'string';
 }
 
+function projectedNotification(summary: SessionSummary): WebNotifyRequest | undefined {
+  const value = summary.projectionValues?.webNotifyRequest;
+  return isRecord(value)
+    && value.version === 1
+    && typeof value.requestId === 'string'
+    && value.requestId.length > 0
+    && typeof value.message === 'string'
+    && value.message.length > 0
+    ? value as unknown as WebNotifyRequest
+    : undefined;
+}
+
 export function installWebNotifications(
   ctx: WebNotifyClientContext,
   browser: BrowserBindings = runtimeBindings(),
@@ -99,6 +113,7 @@ export function installWebNotifications(
   const sessions = ctx.sessions;
   const runningMap = new Map<string, boolean>();
   const pendingMap = new Map<string, PendingInteractionStatus | undefined>();
+  const notificationRequestMap = new Map<string, string | undefined>();
   const summaryGenerationMap = new Map<string, number>();
   const summaryTimerSet = new Set<number>();
   let summaryCapable = false;
@@ -108,6 +123,7 @@ export function installWebNotifications(
   for (const summary of Object.values(sessions.list.getSnapshot().byId)) {
     runningMap.set(summary.id, summary.running);
     pendingMap.set(summary.id, summary.pendingInteraction);
+    notificationRequestMap.set(summary.id, projectedNotification(summary)?.requestId);
   }
 
   const nextSummaryGeneration = (id: string): number => {
@@ -233,12 +249,17 @@ export function installWebNotifications(
       if (!liveIds.has(id)) {
         runningMap.delete(id);
         pendingMap.delete(id);
+        notificationRequestMap.delete(id);
         nextSummaryGeneration(id);
       }
     }
 
     for (const summary of Object.values(byId)) {
       const id = summary.id;
+      const hadNotificationBaseline = notificationRequestMap.has(id);
+      const notificationRequest = projectedNotification(summary);
+      const previousNotificationRequestId = notificationRequestMap.get(id);
+      notificationRequestMap.set(id, notificationRequest?.requestId);
       if (summary.origin === 'subagent') {
         runningMap.set(id, summary.running);
         pendingMap.set(id, summary.pendingInteraction);
@@ -248,6 +269,11 @@ export function installWebNotifications(
       const previousRunning = runningMap.get(id);
       pendingMap.set(id, summary.pendingInteraction);
       runningMap.set(id, summary.running);
+
+      const hasNewNotification = hadNotificationBaseline
+        && notificationRequest !== undefined
+        && notificationRequest.requestId !== previousNotificationRequestId;
+      if (hasNewNotification) nextSummaryGeneration(id);
 
       if (summary.pendingInteraction !== undefined
         && summary.pendingInteraction !== previousPending) {
@@ -262,6 +288,12 @@ export function installWebNotifications(
         continue;
       }
       if (summary.pendingInteraction !== undefined) continue;
+      if (hasNewNotification) {
+        if (!isWatchingSession(id, current)) {
+          showNotification(summary, notificationRequest.message, true);
+        }
+        continue;
+      }
       if (previousRunning !== true || summary.running !== false) continue;
       if (isWatchingSession(id, current)) continue;
 

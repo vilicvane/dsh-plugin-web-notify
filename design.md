@@ -3,14 +3,16 @@
 ## Purpose
 
 Web Notify is a presentation plugin. It observes session-list state in the Web
-client and produces browser notifications for two events:
+client and produces browser notifications for three events:
 
-1. a root conversation becomes idle after running; and
-2. a root conversation gains an approval, plan-review, or question wait.
+1. a user-facing agent explicitly requests a meaningful intermediate update;
+2. a root conversation becomes idle after running; and
+3. a root conversation gains an approval, plan-review, or question wait.
 
-It does not change an agent's transcript, turn lifecycle, model context, or
-persistence. Notification summaries are optional presentation data and must
-degrade to fixed localized text on every failure path.
+The explicit request is a normal tool call and result on the transcript. It
+does not end the turn, inject model context, or add a private event type.
+Notification summaries are optional presentation data and must degrade to
+fixed localized text on every failure path.
 
 ## Host and client boundary
 
@@ -24,6 +26,26 @@ The host owns transcript access and auxiliary model calls. It exposes only:
 
 Both responses are non-cacheable JSON. Other methods and paths are rejected.
 The host route is registered and disposed through the plugin's Cordis effect.
+
+## Agent-requested notifications
+
+`web_notify__send(message)` is available only to user-facing agent sessions.
+Its message is one concise, standalone update. The tool description reserves
+it for meaningful milestones or attention-worthy updates during long-running
+work; completion and pending-interaction notifications stay automatic.
+
+On success, the tool returns normally so the current turn continues. Its
+standard `tool/result.meta` carries a versioned request envelope. In Code Mode,
+where nested result presentation metadata is intentionally omitted, the same
+request is recovered from the standard successful `tool/code-dispatch` event's
+name, arguments, and sub-call id. No downstream-private session event is
+written, so removing this plugin cannot make stored sessions unreadable.
+
+The `webNotifyRequest` session projection retains only the latest request.
+`requestId` is the native call id or Code Mode sub-call id and is the client
+deduplication identity. The projection is delivered through the existing
+session-list snapshot; no notification polling route or additional client
+connection is needed.
 
 ## Completed-turn semantics
 
@@ -56,13 +78,20 @@ entries. Plugin disposal aborts every in-flight request.
 ## Client state machine
 
 The client seeds its running and pending maps from the current session-list
-snapshot, then reacts only to transitions:
+snapshot. It also seeds the latest explicit request id so an old request is
+never replayed after load or reconnect. It then reacts only to transitions:
 
+- a changed `webNotifyRequest.requestId` produces the agent-authored toast;
 - `running: true → false` produces a completion toast unless that session is
   currently visible and focused;
 - a new or changed `pendingInteraction` produces the actionable toast, and an
   unresolved pending interaction continues to suppress completion notices;
 - subagent rows update baselines but never notify.
+
+Priority within one snapshot is pending interaction, explicit request, then
+completion. A lower-priority transition still advances its baseline so it
+cannot replay after the higher-priority state clears. Every explicit request
+also invalidates an in-flight completion summary before any toast decision.
 
 Every session has a monotonically increasing summary generation. Starting a
 new summary, receiving a pending interaction, or removing the session advances

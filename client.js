@@ -78,6 +78,10 @@ window.__ModuleLoader__.load({
     function failedSummary(value) {
       return isRecord(value) && value.ready === false && typeof value.error === "string";
     }
+    function projectedNotification(summary) {
+      const value = summary.projectionValues?.webNotifyRequest;
+      return isRecord(value) && value.version === 1 && typeof value.requestId === "string" && value.requestId.length > 0 && typeof value.message === "string" && value.message.length > 0 ? value : void 0;
+    }
     function installWebNotifications(ctx, browser = runtimeBindings(), options = {}) {
       const strings = stringsForLanguage(browser.language);
       const summaryPollCount = options.summaryPollCount ?? 8;
@@ -85,6 +89,7 @@ window.__ModuleLoader__.load({
       const sessions = ctx.sessions;
       const runningMap = /* @__PURE__ */ new Map();
       const pendingMap = /* @__PURE__ */ new Map();
+      const notificationRequestMap = /* @__PURE__ */ new Map();
       const summaryGenerationMap = /* @__PURE__ */ new Map();
       const summaryTimerSet = /* @__PURE__ */ new Set();
       let summaryCapable = false;
@@ -93,6 +98,7 @@ window.__ModuleLoader__.load({
       for (const summary of Object.values(sessions.list.getSnapshot().byId)) {
         runningMap.set(summary.id, summary.running);
         pendingMap.set(summary.id, summary.pendingInteraction);
+        notificationRequestMap.set(summary.id, projectedNotification(summary)?.requestId);
       }
       const nextSummaryGeneration = (id) => {
         const generation = (summaryGenerationMap.get(id) ?? 0) + 1;
@@ -203,11 +209,16 @@ window.__ModuleLoader__.load({
           if (!liveIds.has(id)) {
             runningMap.delete(id);
             pendingMap.delete(id);
+            notificationRequestMap.delete(id);
             nextSummaryGeneration(id);
           }
         }
         for (const summary of Object.values(byId)) {
           const id = summary.id;
+          const hadNotificationBaseline = notificationRequestMap.has(id);
+          const notificationRequest = projectedNotification(summary);
+          const previousNotificationRequestId = notificationRequestMap.get(id);
+          notificationRequestMap.set(id, notificationRequest?.requestId);
           if (summary.origin === "subagent") {
             runningMap.set(id, summary.running);
             pendingMap.set(id, summary.pendingInteraction);
@@ -217,6 +228,8 @@ window.__ModuleLoader__.load({
           const previousRunning = runningMap.get(id);
           pendingMap.set(id, summary.pendingInteraction);
           runningMap.set(id, summary.running);
+          const hasNewNotification = hadNotificationBaseline && notificationRequest !== void 0 && notificationRequest.requestId !== previousNotificationRequestId;
+          if (hasNewNotification) nextSummaryGeneration(id);
           if (summary.pendingInteraction !== void 0 && summary.pendingInteraction !== previousPending) {
             nextSummaryGeneration(id);
             if (!isWatchingSession(id, current)) {
@@ -229,6 +242,12 @@ window.__ModuleLoader__.load({
             continue;
           }
           if (summary.pendingInteraction !== void 0) continue;
+          if (hasNewNotification) {
+            if (!isWatchingSession(id, current)) {
+              showNotification(summary, notificationRequest.message, true);
+            }
+            continue;
+          }
           if (previousRunning !== true || summary.running !== false) continue;
           if (isWatchingSession(id, current)) continue;
           const notification = showNotification(

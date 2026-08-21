@@ -13,8 +13,8 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function clientHarness(fetchResults: unknown[]) {
-  let snapshot: any = {
+function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
+  let snapshot: any = initialSnapshot ?? {
     byId: {
       'session-1': {
         id: 'session-1',
@@ -160,6 +160,107 @@ test('a new pending interaction invalidates an older summary poll', async () => 
   harness.runNextTimer();
   await flush();
   assert.equal(harness.notifications.at(-1)?.body, 'An approval request is waiting for you');
+  assert.equal(harness.fetchCalls, 1, 'invalidated timer must not request a stale summary');
+  dispose();
+});
+
+test('shows a new agent-requested notification but never replays the initial projection', async () => {
+  const initialSnapshot = {
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 1,
+        projectionValues: {
+          webNotifyRequest: { version: 1, requestId: 'old', message: 'Old update' },
+        },
+      },
+    },
+    current: undefined,
+  };
+  const harness = clientHarness([{ summary: false }], initialSnapshot);
+  const dispose = installWebNotifications(harness.ctx, harness.browser);
+  await flush();
+  assert.equal(harness.notifications.length, 0);
+
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 2,
+        projectionValues: {
+          webNotifyRequest: { version: 1, requestId: 'new', message: 'The build passed.' },
+        },
+      },
+    },
+    current: undefined,
+  });
+  assert.equal(harness.notifications.at(-1)?.body, 'The build passed.');
+  dispose();
+});
+
+test('pending interaction wins when it arrives with an agent-requested notification', async () => {
+  const harness = clientHarness([{ summary: false }]);
+  const dispose = installWebNotifications(harness.ctx, harness.browser);
+  await flush();
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 2,
+        pendingInteraction: 'approval',
+        projectionValues: {
+          webNotifyRequest: { version: 1, requestId: 'new', message: 'Lower priority update' },
+        },
+      },
+    },
+    current: undefined,
+  });
+  assert.equal(harness.notifications.at(-1)?.body, 'An approval request is waiting for you');
+
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 3,
+        projectionValues: {
+          webNotifyRequest: { version: 1, requestId: 'new', message: 'Lower priority update' },
+        },
+      },
+    },
+    current: undefined,
+  });
+  assert.equal(harness.notifications.length, 1, 'consumed lower-priority request must not replay');
+  dispose();
+});
+
+test('agent-requested notification invalidates an in-flight completion summary', async () => {
+  const harness = clientHarness([
+    { summary: true },
+    { ready: true, summary: 'This stale summary must not appear.' },
+  ]);
+  const dispose = installWebNotifications(harness.ctx, harness.browser, {
+    summaryPollIntervalMs: 1,
+  });
+  await flush();
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 2,
+      },
+    },
+    current: undefined,
+  });
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 3,
+        projectionValues: {
+          webNotifyRequest: { version: 1, requestId: 'new', message: 'A later update.' },
+        },
+      },
+    },
+    current: undefined,
+  });
+  assert.equal(harness.notifications.at(-1)?.body, 'A later update.');
+  harness.runNextTimer();
+  await flush();
+  assert.equal(harness.notifications.at(-1)?.body, 'A later update.');
   assert.equal(harness.fetchCalls, 1, 'invalidated timer must not request a stale summary');
   dispose();
 });

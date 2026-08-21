@@ -6,11 +6,16 @@
   "author": "vilicvane",
   "type": "module",
   "files": [
-    "index.js",
-    "client.js"
+    "client.js",
+    "client/*.ts",
+    "index.ts",
+    "lib/*.ts",
+    "scripts/build-client.mjs",
+    "README.md",
+    "design.md"
   ],
   "exports": {
-    ".": "./index.js",
+    ".": "./index.ts",
     "./client": "./client.js",
     "./package.json": "./package.json"
   },
@@ -20,6 +25,31 @@
       "inject": ["@deepseek-ai/dsh-client-runtime"],
       "immediately": true
     }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.8"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.8",
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "build": "pnpm build:client",
+    "build:client": "node scripts/build-client.mjs",
+    "check:client": "node scripts/build-client.mjs --check",
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm check:client && pnpm test && pnpm typecheck"
   },
   "keywords": [
     "dsh",

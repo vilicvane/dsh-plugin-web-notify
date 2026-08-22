@@ -78,9 +78,16 @@ window.__ModuleLoader__.load({
     function failedSummary(value) {
       return isRecord(value) && value.ready === false && typeof value.error === "string";
     }
+    function continuingSummary(value) {
+      return isRecord(value) && value.ready === false && value.continuing === true;
+    }
     function projectedNotification(summary) {
       const value = summary.projectionValues?.webNotifyRequest;
       return isRecord(value) && value.version === 1 && typeof value.requestId === "string" && value.requestId.length > 0 && typeof value.message === "string" && value.message.length > 0 ? value : void 0;
+    }
+    function projectedCompletion(summary) {
+      const value = summary.projectionValues?.webNotifyCompletion;
+      return isRecord(value) && value.version === 1 && Number.isSafeInteger(value.turn) && Number.isSafeInteger(value.endSeq) && typeof value.continues === "boolean" ? value : void 0;
     }
     function installWebNotifications(ctx, browser = runtimeBindings(), options = {}) {
       const strings = stringsForLanguage(browser.language);
@@ -169,7 +176,7 @@ window.__ModuleLoader__.load({
           if (!disposed) summaryCapable = false;
         }
       };
-      const requestTurnSummary = (summary) => {
+      const requestTurnSummary = (summary, placeholder) => {
         const generation = nextSummaryGeneration(summary.id);
         let attempts = 0;
         const current = () => !disposed && summaryGenerationMap.get(summary.id) === generation;
@@ -190,6 +197,8 @@ window.__ModuleLoader__.load({
             const text = readySummary(result);
             if (text !== void 0) {
               showNotification(summary, text, false);
+            } else if (continuingSummary(result)) {
+              placeholder.close();
             } else if (failedSummary(result)) {
               showNotification(summary, strings.completed, false);
             } else {
@@ -250,13 +259,17 @@ window.__ModuleLoader__.load({
           }
           if (previousRunning !== true || summary.running !== false) continue;
           if (isWatchingSession(id, current)) continue;
+          if (projectedCompletion(summary)?.continues === true) {
+            nextSummaryGeneration(id);
+            continue;
+          }
           const notification = showNotification(
             summary,
             summaryCapable ? strings.summarizing : strings.completed,
             true
           );
           if (notification !== void 0 && summaryCapable) {
-            requestTurnSummary(summary);
+            requestTurnSummary(summary, notification);
           } else {
             nextSummaryGeneration(id);
             if (!summaryCapable) void probeSummaryCapability();

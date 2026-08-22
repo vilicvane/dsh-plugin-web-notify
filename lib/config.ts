@@ -17,8 +17,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SYSTEM_PROMPT = [
-  'You write short summaries of finished coding-agent conversation turns for desktop notifications.',
-  'Reply with exactly one concise sentence of at most 30 words describing what was accomplished in this turn.',
+  'You write short summaries of completed coding-agent work segments for desktop notifications.',
+  'A segment may span several automatically continued turns. Reply with exactly one concise sentence of at most 30 words describing what was accomplished across the segment.',
   'Answer in the language used by the human input when it is present; otherwise follow the assistant output.',
   'Do not use a preamble or markdown.',
 ].join(' ');

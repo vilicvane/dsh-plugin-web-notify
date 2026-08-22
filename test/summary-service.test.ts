@@ -89,3 +89,62 @@ test('caches model failures for the same completed turn', async () => {
   assert.match(warnings[0], /failed to summarize session/);
   service.dispose();
 });
+
+test('does not summarize a turn that successfully requested continuation', async () => {
+  let calls = 0;
+  const continuedEvents = events();
+  continuedEvents.splice(3, 0,
+    {
+      seq: 3,
+      time: 3,
+      type: 'tool/call',
+      data: {
+        turn: 1,
+        step: 1,
+        callId: 'continue-1',
+        name: 'continue_after_turn_compression',
+        arguments: JSON.stringify({ handoff: 'next' }),
+      },
+    },
+    {
+      seq: 4,
+      time: 4,
+      type: 'tool/result',
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'continue-result',
+          role: 'user',
+          source: { kind: 'tool', callId: 'continue-1' },
+          content: [{
+            type: 'tool-result',
+            toolCallId: 'continue-1',
+            content: [{ type: 'text', text: 'queued' }],
+            isError: false,
+          }],
+        },
+      },
+    },
+  );
+  continuedEvents.at(-1)!.seq = 5;
+  continuedEvents.at(-1)!.time = 5;
+  const ctx = {
+    sessions: { get: () => ({ events: continuedEvents }) },
+    llm: {
+      async *stream() {
+        calls += 1;
+        yield { type: 'text-delta', text: 'must not run' };
+      },
+    },
+    logger: { warn() {} },
+  } as unknown as Context;
+  const service = new TurnSummaryService(ctx, resolveSettings());
+
+  assert.deepEqual(await service.get('session-summary-continuing'), {
+    ready: false,
+    continuing: true,
+  });
+  assert.equal(calls, 0);
+  service.dispose();
+});

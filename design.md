@@ -6,7 +6,7 @@ Web Notify is a presentation plugin. It observes session-list state in the Web
 client and produces browser notifications for three events:
 
 1. a user-facing agent explicitly requests a meaningful intermediate update;
-2. a root conversation becomes idle after running; and
+2. a root conversation becomes idle after finishing a logical work segment; and
 3. a root conversation gains an approval, plan-review, or question wait.
 
 The explicit request is a normal tool call and result on the transcript. It
@@ -47,11 +47,22 @@ deduplication identity. The projection is delivered through the existing
 session-list snapshot; no notification polling route or additional client
 connection is needed.
 
+The separate `webNotifyCompletion` projection folds the latest structurally
+closed turn and whether it successfully called
+`continue_after_turn_compression`. Native calls require their successful paired
+result; a successful Code Mode dispatch is authoritative by itself. The browser
+uses this value at the same session-list consistency cut as `running: false`, so
+an intermediate Turn Memory handoff is suppressed before any toast is created.
+
 ## Completed-turn semantics
 
-A summary source is the latest structurally closed interval whose
-`turn/start.turn` matches `turn/end.turn`. Extraction is bounded to events
-inside that interval:
+A summary source ends at the latest structurally closed interval whose
+`turn/start.turn` matches `turn/end.turn`. If that turn starts with exactly one
+plugin message from `turn-memory` carrying `phase=continuation`, `fromTurn`, and
+`requestId`, extraction follows the link only when the named predecessor turn
+contains the matching successful continuation tool request. This repeats to
+form one bounded logical work segment; ordinary earlier turns are never merged.
+Extraction is bounded to the linked intervals:
 
 - human `user/message` text is retained in interaction order;
 - text-bearing `assistant/message` blocks for the same turn are retained in
@@ -59,10 +70,13 @@ inside that interval:
 - tool results, reasoning blocks, plugin/runtime user messages, earlier turns,
   and a later open turn are excluded.
 
-Each side is tail-capped by `maxInputChars`, preserving recent corrections,
-steers, progress, and the final answer. The closing `turn/end.seq` is the
-summary identity. Post-turn surface replacements therefore do not cause the
-same completed turn to be summarized again.
+Each side is tail-capped by `maxInputChars` after the linked turns are joined,
+preserving the original human objective alongside recent corrections, progress,
+and the final answer. The final closing `turn/end.seq` is the summary identity.
+Post-turn surface replacements therefore do not cause the same logical segment
+to be summarized again. If the latest closed turn itself successfully requested
+continuation, the summary endpoint returns `continuing: true` without a model
+call as a fallback for clients that missed the projection update.
 
 ## Model call and cache
 
@@ -83,15 +97,17 @@ never replayed after load or reconnect. It then reacts only to transitions:
 
 - a changed `webNotifyRequest.requestId` produces the agent-authored toast;
 - `running: true → false` produces a completion toast unless that session is
-  currently visible and focused;
+  currently visible and focused or `webNotifyCompletion.continues` is true;
 - a new or changed `pendingInteraction` produces the actionable toast, and an
   unresolved pending interaction continues to suppress completion notices;
 - subagent rows update baselines but never notify.
 
 Priority within one snapshot is pending interaction, explicit request, then
-completion. A lower-priority transition still advances its baseline so it
-cannot replay after the higher-priority state clears. Every explicit request
-also invalidates an in-flight completion summary before any toast decision.
+completion. Continuation suppression applies only to the completion branch, so
+an explicit meaningful update in the same cut is still delivered. A
+lower-priority transition still advances its baseline so it cannot replay after
+the higher-priority state clears. Every explicit request also invalidates an
+in-flight completion summary before any toast decision.
 
 Every session has a monotonically increasing summary generation. Starting a
 new summary, receiving a pending interaction, or removing the session advances

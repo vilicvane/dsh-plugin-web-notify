@@ -116,6 +116,87 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
     assert.equal(adapter.calls[0].purpose, 'session-title');
     assert.match(adapter.calls[0].messages[0].content[0].text, /Refactor the notifier/);
     assert.match(adapter.calls[0].messages[0].content[0].text, /Implemented TypeScript and tests/);
+
+    const continuationCallId = CallId('continue-cordis');
+    session.append('turn/start', { turn: 2 });
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'Implement continuation-aware completion.' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' });
+    session.append('assistant/message', {
+      turn: 2,
+      step: 1,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'Implemented the host projection.' }],
+        source: { provider: 'web-notify-test', model: 'summary-model' },
+      }),
+    }, { surfaceOp: 'append', sourceEventSeqs: [] });
+    session.append('tool/call', {
+      turn: 2,
+      step: 1,
+      callId: continuationCallId,
+      name: 'continue_after_turn_compression',
+      arguments: JSON.stringify({ handoff: 'Implement the browser half.' }),
+    });
+    session.append('tool/result', {
+      turn: 2,
+      step: 1,
+      message: createToolResultMessage({
+        callId: continuationCallId,
+        content: [{ type: 'text', text: 'Continuation queued.' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' });
+    const continuedEnd = session.append('turn/end', { turn: 2, reason: { kind: 'completed' } });
+    assert.deepEqual(ctx.sessionProjections.snapshot(session).values.webNotifyCompletion, {
+      version: 1,
+      turn: 2,
+      endSeq: continuedEnd.seq,
+      continues: true,
+    });
+    const intermediate = await fetch(
+      `${base}/web-notify/summary?sessionId=${encodeURIComponent(session.id)}`,
+      { signal: AbortSignal.timeout(3_000) },
+    );
+    assert.deepEqual(await intermediate.json(), { ready: false, continuing: true });
+    assert.equal(adapter.calls.length, 1, 'intermediate handoff must not call the summary model');
+
+    session.append('turn/start', { turn: 3 });
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'Continue from the prior handoff.' }],
+      source: {
+        kind: 'plugin',
+        plugin: 'turn-memory',
+        form: 'notice',
+        phase: 'continuation',
+        requestId: continuationCallId,
+        fromTurn: 2,
+      } as any,
+    }), { surfaceOp: 'append' });
+    session.append('assistant/message', {
+      turn: 3,
+      step: 1,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'Implemented the browser suppression and verified the chain.' }],
+        source: { provider: 'web-notify-test', model: 'summary-model' },
+      }),
+    }, { surfaceOp: 'append', sourceEventSeqs: [] });
+    const finalEnd = session.append('turn/end', { turn: 3, reason: { kind: 'completed' } });
+    assert.deepEqual(ctx.sessionProjections.snapshot(session).values.webNotifyCompletion, {
+      version: 1,
+      turn: 3,
+      endSeq: finalEnd.seq,
+      continues: false,
+    });
+    const final = await fetch(
+      `${base}/web-notify/summary?sessionId=${encodeURIComponent(session.id)}`,
+      { signal: AbortSignal.timeout(3_000) },
+    );
+    assert.equal((await final.json()).ready, true);
+    assert.equal(adapter.calls.length, 2);
+    assert.match(adapter.calls[1].messages[0].content[0].text, /Implement continuation-aware completion/);
+    assert.match(adapter.calls[1].messages[0].content[0].text, /Implemented the host projection/);
+    assert.match(adapter.calls[1].messages[0].content[0].text, /browser suppression and verified/);
   } finally {
     await ctx.fiber.dispose();
   }

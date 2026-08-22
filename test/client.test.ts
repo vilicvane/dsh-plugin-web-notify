@@ -130,6 +130,50 @@ test('upgrades a completion notification with the host summary', async () => {
   dispose();
 });
 
+test('suppresses an intermediate continued turn and notifies after the final turn', async () => {
+  const harness = clientHarness([{ summary: false }]);
+  const dispose = installWebNotifications(harness.ctx, harness.browser);
+  await flush();
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 2,
+        projectionValues: {
+          webNotifyCompletion: { version: 1, turn: 1, endSeq: 10, continues: true },
+        },
+      },
+    },
+    current: undefined,
+  });
+  assert.equal(harness.notifications.length, 0);
+
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 3,
+        projectionValues: {
+          webNotifyCompletion: { version: 1, turn: 1, endSeq: 10, continues: true },
+        },
+      },
+    },
+    current: undefined,
+  });
+  harness.update({
+    byId: {
+      'session-1': {
+        id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 4,
+        projectionValues: {
+          webNotifyCompletion: { version: 1, turn: 2, endSeq: 20, continues: false },
+        },
+      },
+    },
+    current: undefined,
+  });
+  assert.equal(harness.notifications.length, 1);
+  assert.equal(harness.notifications[0].body, 'Conversation finished');
+  dispose();
+});
+
 test('a new pending interaction invalidates an older summary poll', async () => {
   const harness = clientHarness([
     { summary: true },

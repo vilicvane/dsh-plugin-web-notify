@@ -7,6 +7,7 @@ import { buildSummaryPrompt, extractLatestCompletedTurn } from './turn-summary.t
 
 export type SummaryResponse =
   | { ready: true; summary: string }
+  | { ready: false; continuing: true }
   | { ready: false; error?: string };
 
 interface SummaryEntry {
@@ -47,9 +48,9 @@ export class TurnSummaryService {
     if (session === undefined) return { ready: false };
 
     const turn = extractLatestCompletedTurn(session.events, this.settings.maxInputChars);
-    if (turn === undefined || (turn.userText === '' && turn.assistantText === '')) {
-      return { ready: false };
-    }
+    if (turn === undefined) return { ready: false };
+    if (turn.continues) return { ready: false, continuing: true };
+    if (turn.userText === '' && turn.assistantText === '') return { ready: false };
     const key = `${sessionId}:${turn.sourceSeq}`;
     const existing = this.cache.get(key);
     if (existing !== undefined) return this.response(existing);
@@ -122,7 +123,7 @@ export class TurnSummaryService {
             kind: 'plugin',
             plugin: 'web-notify',
             form: 'notice',
-            summary: 'Summarize the completed turn for a browser notification',
+            summary: 'Summarize the completed work segment for a browser notification',
           },
         })],
         system: this.settings.systemPrompt,

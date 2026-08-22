@@ -5,7 +5,7 @@ import type {
   SessionSummary,
 } from '@deepseek-ai/dsh-client-runtime/client';
 
-import type { WebNotifyRequest } from '../lib/types.ts';
+import type { WebNotifyCompletion, WebNotifyRequest } from '../lib/types.ts';
 
 const SUMMARY_PATH = '/web-notify/summary';
 const CAPABILITY_PATH = '/web-notify/capability';
@@ -90,6 +90,10 @@ function failedSummary(value: unknown): boolean {
   return isRecord(value) && value.ready === false && typeof value.error === 'string';
 }
 
+function continuingSummary(value: unknown): boolean {
+  return isRecord(value) && value.ready === false && value.continuing === true;
+}
+
 function projectedNotification(summary: SessionSummary): WebNotifyRequest | undefined {
   const value = summary.projectionValues?.webNotifyRequest;
   return isRecord(value)
@@ -99,6 +103,17 @@ function projectedNotification(summary: SessionSummary): WebNotifyRequest | unde
     && typeof value.message === 'string'
     && value.message.length > 0
     ? value as unknown as WebNotifyRequest
+    : undefined;
+}
+
+function projectedCompletion(summary: SessionSummary): WebNotifyCompletion | undefined {
+  const value = summary.projectionValues?.webNotifyCompletion;
+  return isRecord(value)
+    && value.version === 1
+    && Number.isSafeInteger(value.turn)
+    && Number.isSafeInteger(value.endSeq)
+    && typeof value.continues === 'boolean'
+    ? value as unknown as WebNotifyCompletion
     : undefined;
 }
 
@@ -205,7 +220,7 @@ export function installWebNotifications(
     }
   };
 
-  const requestTurnSummary = (summary: SessionSummary): void => {
+  const requestTurnSummary = (summary: SessionSummary, placeholder: Notification): void => {
     const generation = nextSummaryGeneration(summary.id);
     let attempts = 0;
     const current = (): boolean =>
@@ -227,6 +242,8 @@ export function installWebNotifications(
         const text = readySummary(result);
         if (text !== undefined) {
           showNotification(summary, text, false);
+        } else if (continuingSummary(result)) {
+          placeholder.close();
         } else if (failedSummary(result)) {
           showNotification(summary, strings.completed, false);
         } else {
@@ -296,6 +313,10 @@ export function installWebNotifications(
       }
       if (previousRunning !== true || summary.running !== false) continue;
       if (isWatchingSession(id, current)) continue;
+      if (projectedCompletion(summary)?.continues === true) {
+        nextSummaryGeneration(id);
+        continue;
+      }
 
       const notification = showNotification(
         summary,
@@ -303,7 +324,7 @@ export function installWebNotifications(
         true,
       );
       if (notification !== undefined && summaryCapable) {
-        requestTurnSummary(summary);
+        requestTurnSummary(summary, notification);
       } else {
         nextSummaryGeneration(id);
         if (!summaryCapable) void probeSummaryCapability();

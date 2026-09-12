@@ -1,15 +1,18 @@
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import type {
-  ClientContext,
   ISessions,
-  PendingInteractionStatus,
   SessionSummary,
-} from '@deepseek-ai/dsh-client-runtime/client';
+} from '@deepseek-ai/dsh-api-session-controller/client';
+import type {} from '@deepseek-ai/dsh-client-connection/client';
+import type { UiSession } from '@deepseek-ai/dsh-client-ui-session/client';
 
 import type { WebNotifyCompletion, WebNotifyRequest } from '../lib/types.ts';
 
 const SUMMARY_PATH = '/web-notify/summary';
 const CAPABILITY_PATH = '/web-notify/capability';
 const REQUIRE_INTERACTION = true;
+
+type PendingInteractionStatus = 'approval' | 'plan-review' | 'question';
 
 interface Strings {
   completed: string;
@@ -29,6 +32,7 @@ export interface BrowserBindings {
 
 export interface WebNotifyClientContext {
   sessions: ISessions;
+  uiSession: Pick<UiSession, 'pendingInteractions'>;
   on(name: 'connection/reset', callback: () => void): () => void;
 }
 
@@ -127,7 +131,7 @@ export function installWebNotifications(
   const summaryPollIntervalMs = options.summaryPollIntervalMs ?? 1_500;
   const sessions = ctx.sessions;
   const runningMap = new Map<string, boolean>();
-  const pendingMap = new Map<string, PendingInteractionStatus | undefined>();
+  const pendingMap = new Map<string, string | undefined>();
   const notificationRequestMap = new Map<string, string | undefined>();
   const summaryGenerationMap = new Map<string, number>();
   const summaryTimerSet = new Set<number>();
@@ -135,9 +139,10 @@ export function installWebNotifications(
   let disposed = false;
   let audioContext: AudioContext | undefined;
 
-  for (const summary of Object.values(sessions.list.getSnapshot().byId)) {
+  const pendingInteractions = ctx.uiSession.pendingInteractions;
+  for (const summary of Object.values<SessionSummary>(sessions.list.getSnapshot().byId)) {
     runningMap.set(summary.id, summary.running);
-    pendingMap.set(summary.id, summary.pendingInteraction);
+    pendingMap.set(summary.id, pendingInteractions.getSnapshot().get(summary.id)?.key);
     notificationRequestMap.set(summary.id, projectedNotification(summary)?.requestId);
   }
 
@@ -259,7 +264,7 @@ export function installWebNotifications(
   const isWatchingSession = (id: string, current: string | undefined): boolean =>
     browser.document.hasFocus() && current === id;
 
-  const unsubscribe = sessions.list.subscribe(() => {
+  const updateNotifications = (): void => {
     const { byId, current } = sessions.list.getSnapshot();
     const liveIds = new Set(Object.keys(byId));
     for (const id of runningMap.keys()) {
@@ -271,20 +276,22 @@ export function installWebNotifications(
       }
     }
 
-    for (const summary of Object.values(byId)) {
+    const pendingBySession = pendingInteractions.getSnapshot();
+    for (const summary of Object.values<SessionSummary>(byId)) {
       const id = summary.id;
+      const pending = pendingBySession.get(id);
       const hadNotificationBaseline = notificationRequestMap.has(id);
       const notificationRequest = projectedNotification(summary);
       const previousNotificationRequestId = notificationRequestMap.get(id);
       notificationRequestMap.set(id, notificationRequest?.requestId);
       if (summary.origin === 'subagent') {
         runningMap.set(id, summary.running);
-        pendingMap.set(id, summary.pendingInteraction);
+        pendingMap.set(id, pending?.key);
         continue;
       }
       const previousPending = pendingMap.get(id);
       const previousRunning = runningMap.get(id);
-      pendingMap.set(id, summary.pendingInteraction);
+      pendingMap.set(id, pending?.key);
       runningMap.set(id, summary.running);
 
       const hasNewNotification = hadNotificationBaseline
@@ -292,19 +299,18 @@ export function installWebNotifications(
         && notificationRequest.requestId !== previousNotificationRequestId;
       if (hasNewNotification) nextSummaryGeneration(id);
 
-      if (summary.pendingInteraction !== undefined
-        && summary.pendingInteraction !== previousPending) {
+      if (pending !== undefined && pending.key !== previousPending) {
         nextSummaryGeneration(id);
         if (!isWatchingSession(id, current)) {
           showNotification(
             summary,
-            strings.pending[summary.pendingInteraction] ?? strings.pendingFallback,
+            strings.pending[pending.kind as PendingInteractionStatus] ?? strings.pendingFallback,
             true,
           );
         }
         continue;
       }
-      if (summary.pendingInteraction !== undefined) continue;
+      if (pending !== undefined) continue;
       if (hasNewNotification) {
         if (!isWatchingSession(id, current)) {
           showNotification(summary, notificationRequest.message, true);
@@ -330,7 +336,9 @@ export function installWebNotifications(
         if (!summaryCapable) void probeSummaryCapability();
       }
     }
-  });
+  };
+  const unsubscribe = sessions.list.subscribe(updateNotifications);
+  const unsubscribePending = pendingInteractions.subscribe(updateNotifications);
 
   const requestPermissionIfNeeded = (): void => {
     const NotificationClass = browser.notification;
@@ -351,6 +359,7 @@ export function installWebNotifications(
     if (disposed) return;
     disposed = true;
     unsubscribe();
+    unsubscribePending();
     disposeResetListener();
     browser.window.removeEventListener('pointerdown', requestPermissionIfNeeded, { capture: true });
     for (const id of summaryTimerSet) browser.window.clearTimeout(id);
@@ -359,11 +368,13 @@ export function installWebNotifications(
 }
 
 export const name = 'web-notify';
-export const inject = ['sessions'];
+export const inject = ['sessions', 'uiSession'];
 
 export function apply(ctx: ClientContext): void {
-  ctx.inject(['sessions'], (scope) => {
-    const dispose = installWebNotifications(scope as unknown as WebNotifyClientContext);
-    scope.effect(() => dispose, 'web-notify: browser notifications');
+  const dispose = installWebNotifications({
+    sessions: ctx.sessions as unknown as ISessions,
+    uiSession: ctx.uiSession,
+    on: (event, callback) => ctx.on(event, callback),
   });
+  ctx.effect(() => dispose, 'web-notify: browser notifications');
 }

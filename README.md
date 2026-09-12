@@ -2,6 +2,8 @@
 
 Browser notifications for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) Web GUI.
 
+Targets DSH `0.1.5-rc.2` and its split session-controller / UI-session client APIs.
+
 Shows a browser notification when:
 
 - the agent explicitly sends a meaningful update during a long-running turn;
@@ -75,7 +77,8 @@ notification permission.
 - `index.ts` is the host assembly layer. It registers `/web-notify/summary`
   and `/web-notify/capability` on the DSH web server, registers the
   `web_notify__send(message)` tool and its session projection, and delegates
-  to typed modules under `lib/`.
+  to typed modules under `lib/`. Both HTTP routes use the DSH connection
+  service's cookie authentication and origin checks.
 - `lib/tool.ts` returns a normal successful tool result whose durable
   presentation metadata contains the notification request. It does not end
   the turn or append a plugin-private event. `lib/projection.ts` folds the
@@ -91,11 +94,12 @@ notification permission.
   requests for the same completed logical segment, and bounds its in-memory
   cache.
 - `client/index.ts` is the typed Cordis client source. It injects the
-  `sessions` service and watches the session-list snapshot for
-  `running → false` transitions and for `pendingInteraction`
-  (`approval` / `plan-review` / `question`) arrivals, as well as changes to
-  the `webNotifyRequest` projection. Pending interactions take priority over
-  an agent-requested update in the same snapshot. It probes the
+  `sessions` and `uiSession` services, watches the session-list snapshot for
+  `running → false` transitions and changes to the `webNotifyRequest`
+  projection, and independently subscribes to `uiSession.pendingInteractions`
+  (`approval` / `plan-review` / `question`). Request keys distinguish successive
+  interactions of the same kind. Pending interactions take priority over
+  agent-requested updates while unresolved. It probes the
   capability route at apply (and again after server connection resets), so
   `webNotifyCompletion` projection suppresses the transient idle boundary after
   a successful `continue_after_turn_compression` handoff. Other completion

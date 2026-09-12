@@ -102,9 +102,10 @@ window.__ModuleLoader__.load({
       let summaryCapable = false;
       let disposed = false;
       let audioContext;
+      const pendingInteractions = ctx.uiSession.pendingInteractions;
       for (const summary of Object.values(sessions.list.getSnapshot().byId)) {
         runningMap.set(summary.id, summary.running);
-        pendingMap.set(summary.id, summary.pendingInteraction);
+        pendingMap.set(summary.id, pendingInteractions.getSnapshot().get(summary.id)?.key);
         notificationRequestMap.set(summary.id, projectedNotification(summary)?.requestId);
       }
       const nextSummaryGeneration = (id) => {
@@ -211,7 +212,7 @@ window.__ModuleLoader__.load({
         schedule(() => void poll());
       };
       const isWatchingSession = (id, current) => browser.document.hasFocus() && current === id;
-      const unsubscribe = sessions.list.subscribe(() => {
+      const updateNotifications = () => {
         const { byId, current } = sessions.list.getSnapshot();
         const liveIds = new Set(Object.keys(byId));
         for (const id of runningMap.keys()) {
@@ -222,35 +223,37 @@ window.__ModuleLoader__.load({
             nextSummaryGeneration(id);
           }
         }
+        const pendingBySession = pendingInteractions.getSnapshot();
         for (const summary of Object.values(byId)) {
           const id = summary.id;
+          const pending = pendingBySession.get(id);
           const hadNotificationBaseline = notificationRequestMap.has(id);
           const notificationRequest = projectedNotification(summary);
           const previousNotificationRequestId = notificationRequestMap.get(id);
           notificationRequestMap.set(id, notificationRequest?.requestId);
           if (summary.origin === "subagent") {
             runningMap.set(id, summary.running);
-            pendingMap.set(id, summary.pendingInteraction);
+            pendingMap.set(id, pending?.key);
             continue;
           }
           const previousPending = pendingMap.get(id);
           const previousRunning = runningMap.get(id);
-          pendingMap.set(id, summary.pendingInteraction);
+          pendingMap.set(id, pending?.key);
           runningMap.set(id, summary.running);
           const hasNewNotification = hadNotificationBaseline && notificationRequest !== void 0 && notificationRequest.requestId !== previousNotificationRequestId;
           if (hasNewNotification) nextSummaryGeneration(id);
-          if (summary.pendingInteraction !== void 0 && summary.pendingInteraction !== previousPending) {
+          if (pending !== void 0 && pending.key !== previousPending) {
             nextSummaryGeneration(id);
             if (!isWatchingSession(id, current)) {
               showNotification(
                 summary,
-                strings.pending[summary.pendingInteraction] ?? strings.pendingFallback,
+                strings.pending[pending.kind] ?? strings.pendingFallback,
                 true
               );
             }
             continue;
           }
-          if (summary.pendingInteraction !== void 0) continue;
+          if (pending !== void 0) continue;
           if (hasNewNotification) {
             if (!isWatchingSession(id, current)) {
               showNotification(summary, notificationRequest.message, true);
@@ -275,7 +278,9 @@ window.__ModuleLoader__.load({
             if (!summaryCapable) void probeSummaryCapability();
           }
         }
-      });
+      };
+      const unsubscribe = sessions.list.subscribe(updateNotifications);
+      const unsubscribePending = pendingInteractions.subscribe(updateNotifications);
       const requestPermissionIfNeeded = () => {
         const NotificationClass = browser.notification;
         if (NotificationClass === void 0 || NotificationClass.permission !== "default") return;
@@ -293,6 +298,7 @@ window.__ModuleLoader__.load({
         if (disposed) return;
         disposed = true;
         unsubscribe();
+        unsubscribePending();
         disposeResetListener();
         browser.window.removeEventListener("pointerdown", requestPermissionIfNeeded, { capture: true });
         for (const id of summaryTimerSet) browser.window.clearTimeout(id);
@@ -300,12 +306,14 @@ window.__ModuleLoader__.load({
       };
     }
     var name = "web-notify";
-    var inject = ["sessions"];
+    var inject = ["sessions", "uiSession"];
     function apply(ctx) {
-      ctx.inject(["sessions"], (scope) => {
-        const dispose = installWebNotifications(scope);
-        scope.effect(() => dispose, "web-notify: browser notifications");
+      const dispose = installWebNotifications({
+        sessions: ctx.sessions,
+        uiSession: ctx.uiSession,
+        on: (event, callback) => ctx.on(event, callback)
       });
+      ctx.effect(() => dispose, "web-notify: browser notifications");
     }
     return module.exports;
   },

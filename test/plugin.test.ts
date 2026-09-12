@@ -26,7 +26,7 @@ test('registers one disposable host route with typed defaults', () => {
 
   apply(ctx as any, {});
   assert.equal(name, 'web-notify');
-  assert.deepEqual(inject, ['llm', 'webServer', 'sessions', 'sessionProjections', 'tools']);
+  assert.deepEqual(inject, ['llm', 'webServer', 'connection', 'sessions', 'sessionProjections', 'tools']);
   assert.deepEqual(projections.map((value) => value.key), [
     'webNotifyRequest',
     'webNotifyCompletion',

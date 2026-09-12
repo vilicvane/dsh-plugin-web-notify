@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { CallId } from '@deepseek-ai/dsh-llm';
+import { ToolCallId } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
-import { Session, SessionId } from '@deepseek-ai/dsh-session';
+import { Session, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session';
 
 import {
   webNotifyCompletionProjection,
@@ -20,9 +20,9 @@ function event(type: string, data: unknown): SessionEvent {
 test('tool returns a durable presentation envelope without ending the turn', async () => {
   const session = Session.create(SessionId('session-web-notify-tool'));
   const tool = createWebNotifyTool();
-  const eventCountBefore = session.events.length;
+  const eventCountBefore = session.snapshotEvents().length;
   const value = await tool.execute({ message: '  The first phase passed.  ' }, {
-    callId: CallId('notify-call-1'),
+    callId: ToolCallId('notify-call-1'),
     agent: { session },
   } as any) as { requestId: string; message: string };
 
@@ -42,7 +42,7 @@ test('tool returns a durable presentation envelope without ending the turn', asy
     text: 'Browser notification requested. Continue the current turn.',
   }]);
   assert.equal(
-    session.events.length,
+    session.snapshotEvents().length,
     eventCountBefore,
     'the tool body must not append a private event',
   );
@@ -51,18 +51,18 @@ test('tool returns a durable presentation envelope without ending the turn', asy
 test('tool rejects empty messages, detached calls, and subagent sessions', async () => {
   const tool = createWebNotifyTool();
   await assert.rejects(
-    tool.execute({ message: ' ' }, { callId: CallId('empty'), agent: {
+    tool.execute({ message: ' ' }, { callId: ToolCallId('empty'), agent: {
       session: Session.create(SessionId('empty-message')),
     } } as any),
     /must not be empty/,
   );
   await assert.rejects(
-    tool.execute({ message: 'Update' }, { callId: CallId('detached') } as any),
+    tool.execute({ message: 'Update' }, { callId: ToolCallId('detached') } as any),
     /owning agent session/,
   );
   await assert.rejects(
     tool.execute({ message: 'Update' }, {
-      callId: CallId('subagent'),
+      callId: ToolCallId('subagent'),
       agent: { session: { header: { origin: 'subagent' } } },
     } as any),
     /user-facing sessions/,
@@ -86,10 +86,10 @@ test('projection folds Native meta and successful Code Mode dispatches', () => {
     message: 'Native milestone reached.',
   });
 
-  const nativeState = projection.apply(projection.init(), nativeEvent);
+  const nativeState = projection.apply(projection.init(Session.create(SessionId('projection-test')).header, SessionLogOffset(0)), nativeEvent);
   assert.equal(projection.apply(nativeState, nativeEvent), nativeState, 'same request is idempotent');
 
-  const codeEvent = event('tool/code-dispatch', {
+  const codeEvent = event('tool/ptc-dispatch', {
     rootCallId: 'run-code-1',
     parentCallId: 'run-code-1',
     subCallId: 'run-code-1:code:0',
@@ -104,7 +104,7 @@ test('projection folds Native meta and successful Code Mode dispatches', () => {
     message: 'Code Mode milestone reached.',
   });
 
-  assert.equal(webNotifyRequestFromEvent(event('tool/code-dispatch', {
+  assert.equal(webNotifyRequestFromEvent(event('tool/ptc-dispatch', {
     subCallId: 'failed',
     name: WEB_NOTIFY_TOOL_NAME,
     arguments: { message: 'Do not show' },
@@ -114,7 +114,7 @@ test('projection folds Native meta and successful Code Mode dispatches', () => {
 
 test('completion projection marks only successful continuation handoffs', () => {
   const projection = webNotifyCompletionProjection();
-  let state = projection.init();
+  let state = projection.init(Session.create(SessionId('projection-test')).header, SessionLogOffset(0));
   const apply = (seq: number, type: string, data: unknown): void => {
     state = projection.apply(state, { seq, time: seq, type, data } as SessionEvent);
   };
@@ -151,7 +151,7 @@ test('completion projection marks only successful continuation handoffs', () => 
   });
 
   apply(4, 'turn/start', { turn: 2 });
-  apply(5, 'tool/code-dispatch', {
+  apply(5, 'tool/ptc-dispatch', {
     subCallId: 'continue-code',
     name: 'continue_after_turn_compression',
     arguments: { handoff: 'next' },

@@ -73,9 +73,10 @@ function requestFromMeta(value: unknown): WebNotifyRequest | undefined {
 export function webNotifyRequestFromEvent(event: SessionEvent): WebNotifyRequest | undefined {
   if (event.type === 'tool/result') return requestFromMeta(event.data.meta);
 
-  // `tool/code-dispatch` is contributed to SessionEventMap by dsh-tools. Keep
-  // this structural so the projection remains tolerant of older stored rows.
-  if (event.type !== 'tool/code-dispatch') return undefined;
+  // `tool/ptc-dispatch` is contributed to SessionEventMap by dsh-tools. DSH
+  // 0.1.5 renamed it from `tool/code-dispatch` with the same data shape, so the
+  // structural field checks below still hold.
+  if (event.type !== 'tool/ptc-dispatch') return undefined;
   const data = event.data;
   if (data.name !== WEB_NOTIFY_TOOL_NAME || data.isError || !isRecord(data.arguments)) {
     return undefined;

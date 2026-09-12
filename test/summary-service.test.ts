@@ -38,7 +38,7 @@ test('deduplicates concurrent model calls and caches one completed turn', async 
   let calls = 0;
   let request: any;
   const ctx = {
-    sessions: { get: () => ({ events: events() }) },
+    sessions: { get: () => ({ snapshotEvents: () => events() }) },
     llm: {
       async *stream(options: any) {
         calls += 1;
@@ -70,7 +70,7 @@ test('caches model failures for the same completed turn', async () => {
   let calls = 0;
   const warnings: string[] = [];
   const ctx = {
-    sessions: { get: () => ({ events: events() }) },
+    sessions: { get: () => ({ snapshotEvents: () => events() }) },
     llm: {
       async *stream() {
         calls += 1;
@@ -130,7 +130,7 @@ test('does not summarize a turn that successfully requested continuation', async
   continuedEvents.at(-1)!.seq = 5;
   continuedEvents.at(-1)!.time = 5;
   const ctx = {
-    sessions: { get: () => ({ events: continuedEvents }) },
+    sessions: { get: () => ({ snapshotEvents: () => continuedEvents }) },
     llm: {
       async *stream() {
         calls += 1;

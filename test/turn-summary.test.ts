@@ -110,7 +110,7 @@ test('merges only a verified Turn Memory continuation chain', () => {
     event(10, 'turn/start', { turn: 2 }),
     continuation(11, 1, 'continue-1'),
     assistant(12, 2, 'Implemented the browser half.'),
-    event(13, 'tool/code-dispatch', {
+    event(13, 'tool/ptc-dispatch', {
       subCallId: 'continue-2',
       name: 'continue_after_turn_compression',
       arguments: { handoff: 'verify' },

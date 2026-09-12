@@ -27,6 +27,8 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
     current: undefined,
   };
   const subscribers = new Set<() => void>();
+  const pendingSubscribers = new Set<() => void>();
+  let pendingSnapshot = new Map<string, { key: string; kind: string; sessionId: string }>();
   const timers = new Map<number, () => void>();
   const notifications: Array<{ title: string; body?: string; notification: any }> = [];
   const opened: string[] = [];
@@ -67,6 +69,15 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
     }) as typeof fetch,
   };
   const ctx = {
+    uiSession: {
+      pendingInteractions: {
+        getSnapshot: () => pendingSnapshot,
+        subscribe(callback: () => void) {
+          pendingSubscribers.add(callback);
+          return () => pendingSubscribers.delete(callback);
+        },
+      },
+    },
     sessions: {
       list: {
         getSnapshot: () => snapshot,
@@ -86,6 +97,12 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
     notifications,
     opened,
     get fetchCalls() { return fetchCalls; },
+    updatePending(kind?: string, key = kind) {
+      pendingSnapshot = kind === undefined ? new Map() : new Map([
+        ['session-1', { key: key!, kind, sessionId: 'session-1' }],
+      ]);
+      for (const callback of pendingSubscribers) callback();
+    },
     update(value: any) {
       snapshot = value;
       for (const callback of subscribers) callback();
@@ -102,6 +119,24 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
 test('localizes notification copy', () => {
   assert.equal(stringsForLanguage('zh-CN').completed, '对话已完成');
   assert.equal(stringsForLanguage('en-US').pending.question, 'A question is waiting for your answer');
+});
+
+test('notifies for independent UI requests and replacements of the same kind', async () => {
+  const harness = clientHarness([{ summary: false }]);
+  const dispose = installWebNotifications(harness.ctx, harness.browser);
+  await flush();
+  harness.updatePending('question', 'first-question');
+  assert.equal(harness.notifications.length, 1);
+  assert.equal(harness.notifications[0].body, 'A question is waiting for your answer');
+  harness.updatePending('question', 'first-question');
+  assert.equal(harness.notifications.length, 1);
+  harness.updatePending('question', 'second-question');
+  assert.equal(harness.notifications.length, 2);
+  harness.updatePending('plan-review', 'plan');
+  assert.equal(harness.notifications.at(-1)?.body, 'A plan is waiting for your review');
+  dispose();
+  harness.updatePending('approval', 'after-dispose');
+  assert.equal(harness.notifications.length, 3);
 });
 
 test('upgrades a completion notification with the host summary', async () => {
@@ -191,11 +226,11 @@ test('a new pending interaction invalidates an older summary poll', async () => 
     },
     current: undefined,
   });
+  harness.updatePending('approval');
   harness.update({
     byId: {
       'session-1': {
         id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 3,
-        pendingInteraction: 'approval',
       },
     },
     current: undefined,
@@ -244,11 +279,11 @@ test('pending interaction wins when it arrives with an agent-requested notificat
   const harness = clientHarness([{ summary: false }]);
   const dispose = installWebNotifications(harness.ctx, harness.browser);
   await flush();
+  harness.updatePending('approval');
   harness.update({
     byId: {
       'session-1': {
         id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 2,
-        pendingInteraction: 'approval',
         projectionValues: {
           webNotifyRequest: { version: 1, requestId: 'new', message: 'Lower priority update' },
         },
@@ -313,11 +348,11 @@ test('an unresolved or changed pending interaction stays above completion', asyn
   const harness = clientHarness([{ summary: false }]);
   const dispose = installWebNotifications(harness.ctx, harness.browser);
   await flush();
+  harness.updatePending('approval');
   harness.update({
     byId: {
       'session-1': {
         id: 'session-1', displayTitle: 'Notify work', running: true, blank: false, updatedAt: 2,
-        pendingInteraction: 'approval',
       },
     },
     current: undefined,
@@ -325,11 +360,11 @@ test('an unresolved or changed pending interaction stays above completion', asyn
   assert.equal(harness.notifications.at(-1)?.body, 'An approval request is waiting for you');
   const afterApproval = harness.notifications.length;
 
+  harness.updatePending('approval');
   harness.update({
     byId: {
       'session-1': {
         id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 3,
-        pendingInteraction: 'approval',
       },
     },
     current: undefined,
@@ -337,11 +372,11 @@ test('an unresolved or changed pending interaction stays above completion', asyn
   assert.equal(harness.notifications.length, afterApproval);
   assert.equal(harness.notifications.at(-1)?.body, 'An approval request is waiting for you');
 
+  harness.updatePending('question');
   harness.update({
     byId: {
       'session-1': {
         id: 'session-1', displayTitle: 'Notify work', running: false, blank: false, updatedAt: 4,
-        pendingInteraction: 'question',
       },
     },
     current: undefined,
@@ -363,6 +398,6 @@ test('generated browser bundle exposes the typed client plugin', () => {
   assert.equal(loaded.id, 'dsh-plugin-web-notify');
   const exports = loaded.factory();
   assert.equal(exports.name, 'web-notify');
-  assert.deepEqual(Array.from(exports.inject), ['sessions']);
+  assert.deepEqual(Array.from(exports.inject), ['sessions', 'uiSession']);
   assert.equal(typeof exports.apply, 'function');
 });

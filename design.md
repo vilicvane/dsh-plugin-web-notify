@@ -91,18 +91,21 @@ entries. Plugin disposal aborts every in-flight request.
 
 ## Client state machine
 
-The client seeds its running and pending maps from the current session-list
-snapshot. It also seeds the latest explicit request id so an old request is
-never replayed after load or reconnect. It then reacts only to transitions:
+The client seeds its running map from the session-list snapshot and its
+pending keys from the independent `uiSession.pendingInteractions` observable.
+It also seeds the latest explicit request id so an old request is never
+replayed after load or reconnect. It subscribes to both observables and reacts
+only to transitions:
 
 - a changed `webNotifyRequest.requestId` produces the agent-authored toast;
 - `running: true → false` produces a completion toast unless that session is
   currently visible and focused or `webNotifyCompletion.continues` is true;
-- a new or changed `pendingInteraction` produces the actionable toast, and an
+- a new pending interaction key produces the actionable toast, including a
+  replacement request of the same kind, and an
   unresolved pending interaction continues to suppress completion notices;
 - subagent rows update baselines but never notify.
 
-Priority within one snapshot is pending interaction, explicit request, then
+Priority for each update is pending interaction, explicit request, then
 completion. Continuation suppression applies only to the completion branch, so
 an explicit meaningful update in the same cut is still delivered. A
 lower-priority transition still advances its baseline so it cannot replay after

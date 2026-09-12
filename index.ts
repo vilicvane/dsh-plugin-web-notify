@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-host-webserver';
+import type {} from '@deepseek-ai/dsh-client-connection';
 import type {} from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-session-projection';
@@ -16,7 +17,7 @@ import { TurnSummaryService } from './lib/summary-service.ts';
 import { createWebNotifyTool } from './lib/tool.ts';
 
 const name = 'web-notify';
-const inject = ['llm', 'webServer', 'sessions', 'sessionProjections', 'tools'];
+const inject = ['llm', 'webServer', 'connection', 'sessions', 'sessionProjections', 'tools'];
 
 function apply(ctx: Context, config: Config = {}): void {
   const projections = ctx.sessionProjections as unknown as {
@@ -33,7 +34,15 @@ function apply(ctx: Context, config: Config = {}): void {
     const disposeRoute = ctx.webServer.register({
       kind: 'prefix',
       path: '/web-notify',
-      handler,
+      handler: (req, res) => {
+        const rejection = ctx.connection.requestRejection(req);
+        if (rejection !== undefined) {
+          res.writeHead(rejection, { 'cache-control': 'no-store' });
+          res.end();
+          return;
+        }
+        return handler(req, res);
+      },
     });
     return () => {
       service.dispose();

@@ -54,7 +54,9 @@ export function successfulToolResultCallId(event: SessionEvent): string | undefi
 }
 
 export function successfulCodeContinuationId(event: SessionEvent): string | undefined {
-  if (event.type !== 'tool/code-dispatch') return undefined;
+  // DSH 0.1.5 renamed the PTC dispatch event (`tool/code-dispatch` ->
+  // `tool/ptc-dispatch`) without changing its data shape.
+  if (event.type !== 'tool/ptc-dispatch') return undefined;
   const data = event.data;
   return data.name === TURN_CONTINUATION_TOOL_NAME
     && data.isError === false

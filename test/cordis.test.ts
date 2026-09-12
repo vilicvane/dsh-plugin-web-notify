@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Context } from '@deepseek-ai/cordis';
 import WebServer from '@deepseek-ai/dsh-host-webserver';
+import * as Connection from '@deepseek-ai/dsh-client-connection';
+import LocalCredentials from '@deepseek-ai/dsh-credentials-local';
 import LlmRuntime, {
-  CallId,
+  ToolCallId,
   LlmAdapter,
   createAssistantMessage,
   createToolResultMessage,
@@ -29,10 +34,13 @@ class SummaryAdapter extends LlmAdapter {
 
 test('serves a real completed-turn summary through Cordis and HTTP', async () => {
   const ctx = new Context();
+  const credentialDir = await mkdtemp(join(tmpdir(), 'web-notify-auth-'));
   try {
     await ctx.plugin(SessionStore);
     await ctx.plugin(LlmRuntime);
     await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 });
+    await ctx.plugin(LocalCredentials, { dshHome: credentialDir, watch: false });
+    await ctx.plugin(Connection);
     await ctx.plugin(SystemPrompt, {});
     await ctx.plugin(ToolRuntime, { mode: 'native' });
     await ctx.plugin(SessionProjectionRegistry);
@@ -46,7 +54,7 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
     assert.ok(ctx.tools.schemas().some((tool) => tool.name === 'web_notify__send'));
 
     const session = ctx.sessions.create(SessionId('session-web-notify-cordis'));
-    const notifyCallId = CallId('notify-call-cordis');
+    const notifyCallId = ToolCallId('notify-call-cordis');
     const notifyTool = ctx.tools.get('web_notify__send');
     assert.ok(notifyTool);
     const notifyArgs = { message: 'The integration smoke reached its midpoint.' };
@@ -95,18 +103,44 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
         content: [{ type: 'text', text: 'Implemented TypeScript and tests.' }],
         source: { provider: 'web-notify-test', model: 'summary-model' },
       }),
-    }, { surfaceOp: 'append', sourceEventSeqs: [] });
+      // DSH 0.1.5 forbids assistant/message from citing source events; the
+      // provider stream is embedded in the event instead.
+      stream: [],
+    }, { surfaceOp: 'append' });
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
 
     const base = `http://127.0.0.1:${ctx.webServer.port}`;
+    ctx.webServer.register({
+      kind: 'exact', path: '/',
+      handler: (req, res) => {
+        if (ctx.connection.authorizeIndex(req, res)) res.end('authenticated');
+      },
+    });
+    const anonymous = await fetch(`${base}/web-notify/summary?sessionId=${session.id}`, {
+      signal: AbortSignal.timeout(3_000),
+    });
+    assert.equal(anonymous.status, 401);
+    assert.equal(adapter.calls.length, 0, 'unauthenticated reads must not call the model');
+    const login = await fetch(ctx.connection.authenticatedUrl(base), {
+      redirect: 'manual', signal: AbortSignal.timeout(3_000),
+    });
+    assert.equal(login.status, 303);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const headers = { cookie };
+    const crossOrigin = await fetch(`${base}/web-notify/capability`, {
+      headers: { ...headers, origin: 'http://untrusted.example' },
+      signal: AbortSignal.timeout(3_000),
+    });
+    assert.equal(crossOrigin.status, 403);
     const capability = await fetch(`${base}/web-notify/capability`, {
+      headers,
       signal: AbortSignal.timeout(3_000),
     });
     assert.deepEqual(await capability.json(), { summary: true });
 
     const response = await fetch(
       `${base}/web-notify/summary?sessionId=${encodeURIComponent(session.id)}`,
-      { signal: AbortSignal.timeout(3_000) },
+      { headers, signal: AbortSignal.timeout(3_000) },
     );
     assert.deepEqual(await response.json(), {
       ready: true,
@@ -117,7 +151,7 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
     assert.match(adapter.calls[0].messages[0].content[0].text, /Refactor the notifier/);
     assert.match(adapter.calls[0].messages[0].content[0].text, /Implemented TypeScript and tests/);
 
-    const continuationCallId = CallId('continue-cordis');
+    const continuationCallId = ToolCallId('continue-cordis');
     session.append('turn/start', { turn: 2 });
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'Implement continuation-aware completion.' }],
@@ -130,7 +164,9 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
         content: [{ type: 'text', text: 'Implemented the host projection.' }],
         source: { provider: 'web-notify-test', model: 'summary-model' },
       }),
-    }, { surfaceOp: 'append', sourceEventSeqs: [] });
+      // DSH 0.1.5 forbids assistant/message from citing source events.
+      stream: [],
+    }, { surfaceOp: 'append' });
     session.append('tool/call', {
       turn: 2,
       step: 1,
@@ -156,7 +192,7 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
     });
     const intermediate = await fetch(
       `${base}/web-notify/summary?sessionId=${encodeURIComponent(session.id)}`,
-      { signal: AbortSignal.timeout(3_000) },
+      { headers, signal: AbortSignal.timeout(3_000) },
     );
     assert.deepEqual(await intermediate.json(), { ready: false, continuing: true });
     assert.equal(adapter.calls.length, 1, 'intermediate handoff must not call the summary model');
@@ -180,7 +216,9 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
         content: [{ type: 'text', text: 'Implemented the browser suppression and verified the chain.' }],
         source: { provider: 'web-notify-test', model: 'summary-model' },
       }),
-    }, { surfaceOp: 'append', sourceEventSeqs: [] });
+      // DSH 0.1.5 forbids assistant/message from citing source events.
+      stream: [],
+    }, { surfaceOp: 'append' });
     const finalEnd = session.append('turn/end', { turn: 3, reason: { kind: 'completed' } });
     assert.deepEqual(ctx.sessionProjections.snapshot(session).values.webNotifyCompletion, {
       version: 1,
@@ -190,7 +228,7 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
     });
     const final = await fetch(
       `${base}/web-notify/summary?sessionId=${encodeURIComponent(session.id)}`,
-      { signal: AbortSignal.timeout(3_000) },
+      { headers, signal: AbortSignal.timeout(3_000) },
     );
     assert.equal((await final.json()).ready, true);
     assert.equal(adapter.calls.length, 2);
@@ -199,5 +237,6 @@ test('serves a real completed-turn summary through Cordis and HTTP', async () =>
     assert.match(adapter.calls[1].messages[0].content[0].text, /browser suppression and verified/);
   } finally {
     await ctx.fiber.dispose();
+    await rm(credentialDir, { recursive: true, force: true });
   }
 });

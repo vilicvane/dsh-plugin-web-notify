@@ -47,7 +47,7 @@ export class TurnSummaryService {
     const session = this.ctx.sessions.get(sessionId);
     if (session === undefined) return { ready: false };
 
-    const turn = extractLatestCompletedTurn(session.events, this.settings.maxInputChars);
+    const turn = extractLatestCompletedTurn(session.snapshotEvents(), this.settings.maxInputChars);
     if (turn === undefined) return { ready: false };
     if (turn.continues) return { ready: false, continuing: true };
     if (turn.userText === '' && turn.assistantText === '') return { ready: false };

@@ -5,6 +5,7 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-connection/client';
 import type { UiSession } from '@deepseek-ai/dsh-client-ui-session/client';
+import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client';
 
 import type { WebNotifyCompletion, WebNotifyRequest } from '../lib/types.ts';
 
@@ -32,7 +33,8 @@ export interface BrowserBindings {
 
 export interface WebNotifyClientContext {
   sessions: ISessions;
-  uiSession: Pick<UiSession, 'pendingInteractions'>;
+  uiSession: Pick<UiSession, 'sessionStatus'>;
+  uiWorkspace: Pick<UiWorkspace, 'openSession'>;
   on(name: 'connection/reset', callback: () => void): () => void;
 }
 
@@ -139,10 +141,10 @@ export function installWebNotifications(
   let disposed = false;
   let audioContext: AudioContext | undefined;
 
-  const pendingInteractions = ctx.uiSession.pendingInteractions;
+  const sessionStatus = ctx.uiSession.sessionStatus;
   for (const summary of Object.values<SessionSummary>(sessions.list.getSnapshot().byId)) {
     runningMap.set(summary.id, summary.running);
-    pendingMap.set(summary.id, pendingInteractions.getSnapshot().get(summary.id)?.key);
+    pendingMap.set(summary.id, sessionStatus.getSnapshot().get(summary.id)?.pendingInteraction?.key);
     notificationRequestMap.set(summary.id, projectedNotification(summary)?.requestId);
   }
 
@@ -195,7 +197,7 @@ export function installWebNotifications(
       });
       if (withChime) playChime();
       notification.onclick = () => {
-        sessions.open(summary.id);
+        ctx.uiWorkspace.openSession(summary.id);
         browser.window.focus();
         notification.close();
       };
@@ -276,10 +278,10 @@ export function installWebNotifications(
       }
     }
 
-    const pendingBySession = pendingInteractions.getSnapshot();
+    const statusBySession = sessionStatus.getSnapshot();
     for (const summary of Object.values<SessionSummary>(byId)) {
       const id = summary.id;
-      const pending = pendingBySession.get(id);
+      const pending = statusBySession.get(id)?.pendingInteraction;
       const hadNotificationBaseline = notificationRequestMap.has(id);
       const notificationRequest = projectedNotification(summary);
       const previousNotificationRequestId = notificationRequestMap.get(id);
@@ -338,7 +340,7 @@ export function installWebNotifications(
     }
   };
   const unsubscribe = sessions.list.subscribe(updateNotifications);
-  const unsubscribePending = pendingInteractions.subscribe(updateNotifications);
+  const unsubscribePending = sessionStatus.subscribe(updateNotifications);
 
   const requestPermissionIfNeeded = (): void => {
     const NotificationClass = browser.notification;
@@ -368,12 +370,13 @@ export function installWebNotifications(
 }
 
 export const name = 'web-notify';
-export const inject = ['sessions', 'uiSession'];
+export const inject = ['sessions', 'uiSession', 'uiWorkspace'];
 
 export function apply(ctx: ClientContext): void {
   const dispose = installWebNotifications({
     sessions: ctx.sessions as unknown as ISessions,
     uiSession: ctx.uiSession,
+    uiWorkspace: ctx.uiWorkspace,
     on: (event, callback) => ctx.on(event, callback),
   });
   ctx.effect(() => dispose, 'web-notify: browser notifications');

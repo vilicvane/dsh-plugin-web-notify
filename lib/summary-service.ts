@@ -5,6 +5,25 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import type { Settings } from './config.ts';
 import { buildSummaryPrompt, extractLatestCompletedTurn } from './turn-summary.ts';
 
+/** Host notice shown to the summarization model; never lands in a session. */
+interface WebNotifySummarySource {
+  readonly kind: 'web-notify-summary';
+  readonly form: 'notice';
+  readonly summary: string;
+}
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'web-notify-summary': WebNotifySummarySource;
+  }
+}
+
+const SUMMARY_SOURCE: WebNotifySummarySource = {
+  kind: 'web-notify-summary',
+  form: 'notice',
+  summary: 'Summarize the completed work segment for a browser notification',
+};
+
 export type SummaryResponse =
   | { ready: true; summary: string }
   | { ready: false; continuing: true }
@@ -119,12 +138,7 @@ export class TurnSummaryService {
         model: this.settings.model,
         messages: [createUserMessage({
           content: [{ type: 'text', text: prompt }],
-          source: {
-            kind: 'plugin',
-            plugin: 'web-notify',
-            form: 'notice',
-            summary: 'Summarize the completed work segment for a browser notification',
-          },
+          source: SUMMARY_SOURCE,
         })],
         system: this.settings.systemPrompt,
         maxTokens: this.settings.maxOutputTokens,

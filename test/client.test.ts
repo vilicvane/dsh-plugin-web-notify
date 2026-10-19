@@ -28,7 +28,10 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
   };
   const subscribers = new Set<() => void>();
   const pendingSubscribers = new Set<() => void>();
-  let pendingSnapshot = new Map<string, { key: string; kind: string; sessionId: string }>();
+  let statusSnapshot = new Map<
+    string,
+    { pendingInteraction?: { key: string; kind: string; sessionId: string } }
+  >();
   const timers = new Map<number, () => void>();
   const notifications: Array<{ title: string; body?: string; notification: any }> = [];
   const opened: string[] = [];
@@ -70,8 +73,8 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
   };
   const ctx = {
     uiSession: {
-      pendingInteractions: {
-        getSnapshot: () => pendingSnapshot,
+      sessionStatus: {
+        getSnapshot: () => statusSnapshot,
         subscribe(callback: () => void) {
           pendingSubscribers.add(callback);
           return () => pendingSubscribers.delete(callback);
@@ -86,7 +89,9 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
           return () => subscribers.delete(callback);
         },
       },
-      open(id: string) { opened.push(id); },
+    },
+    uiWorkspace: {
+      openSession(id: string) { opened.push(id); },
     },
     on() { return () => {}; },
   } as unknown as WebNotifyClientContext;
@@ -98,8 +103,8 @@ function clientHarness(fetchResults: unknown[], initialSnapshot?: any) {
     opened,
     get fetchCalls() { return fetchCalls; },
     updatePending(kind?: string, key = kind) {
-      pendingSnapshot = kind === undefined ? new Map() : new Map([
-        ['session-1', { key: key!, kind, sessionId: 'session-1' }],
+      statusSnapshot = kind === undefined ? new Map() : new Map([
+        ['session-1', { pendingInteraction: { key: key!, kind, sessionId: 'session-1' } }],
       ]);
       for (const callback of pendingSubscribers) callback();
     },
@@ -398,6 +403,6 @@ test('generated browser bundle exposes the typed client plugin', () => {
   assert.equal(loaded.id, 'dsh-plugin-web-notify');
   const exports = loaded.factory();
   assert.equal(exports.name, 'web-notify');
-  assert.deepEqual(Array.from(exports.inject), ['sessions', 'uiSession']);
+  assert.deepEqual(Array.from(exports.inject), ['sessions', 'uiSession', 'uiWorkspace']);
   assert.equal(typeof exports.apply, 'function');
 });

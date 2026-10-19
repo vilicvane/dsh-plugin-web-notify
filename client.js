@@ -102,10 +102,10 @@ window.__ModuleLoader__.load({
       let summaryCapable = false;
       let disposed = false;
       let audioContext;
-      const pendingInteractions = ctx.uiSession.pendingInteractions;
+      const sessionStatus = ctx.uiSession.sessionStatus;
       for (const summary of Object.values(sessions.list.getSnapshot().byId)) {
         runningMap.set(summary.id, summary.running);
-        pendingMap.set(summary.id, pendingInteractions.getSnapshot().get(summary.id)?.key);
+        pendingMap.set(summary.id, sessionStatus.getSnapshot().get(summary.id)?.pendingInteraction?.key);
         notificationRequestMap.set(summary.id, projectedNotification(summary)?.requestId);
       }
       const nextSummaryGeneration = (id) => {
@@ -150,7 +150,7 @@ window.__ModuleLoader__.load({
           });
           if (withChime) playChime();
           notification.onclick = () => {
-            sessions.open(summary.id);
+            ctx.uiWorkspace.openSession(summary.id);
             browser.window.focus();
             notification.close();
           };
@@ -223,10 +223,10 @@ window.__ModuleLoader__.load({
             nextSummaryGeneration(id);
           }
         }
-        const pendingBySession = pendingInteractions.getSnapshot();
+        const statusBySession = sessionStatus.getSnapshot();
         for (const summary of Object.values(byId)) {
           const id = summary.id;
-          const pending = pendingBySession.get(id);
+          const pending = statusBySession.get(id)?.pendingInteraction;
           const hadNotificationBaseline = notificationRequestMap.has(id);
           const notificationRequest = projectedNotification(summary);
           const previousNotificationRequestId = notificationRequestMap.get(id);
@@ -280,7 +280,7 @@ window.__ModuleLoader__.load({
         }
       };
       const unsubscribe = sessions.list.subscribe(updateNotifications);
-      const unsubscribePending = pendingInteractions.subscribe(updateNotifications);
+      const unsubscribePending = sessionStatus.subscribe(updateNotifications);
       const requestPermissionIfNeeded = () => {
         const NotificationClass = browser.notification;
         if (NotificationClass === void 0 || NotificationClass.permission !== "default") return;
@@ -306,11 +306,12 @@ window.__ModuleLoader__.load({
       };
     }
     var name = "web-notify";
-    var inject = ["sessions", "uiSession"];
+    var inject = ["sessions", "uiSession", "uiWorkspace"];
     function apply(ctx) {
       const dispose = installWebNotifications({
         sessions: ctx.sessions,
         uiSession: ctx.uiSession,
+        uiWorkspace: ctx.uiWorkspace,
         on: (event, callback) => ctx.on(event, callback)
       });
       ctx.effect(() => dispose, "web-notify: browser notifications");

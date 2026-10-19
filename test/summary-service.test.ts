@@ -61,7 +61,8 @@ test('deduplicates concurrent model calls and caches one completed turn', async 
   assert.deepEqual(await service.get('session-summary-test'), first);
   assert.equal(calls, 1);
   assert.equal(request.purpose, 'session-title');
-  assert.equal(request.messages[0].source.plugin, 'web-notify');
+  assert.equal(request.messages[0].source.kind, 'web-notify-summary');
+  assert.match(request.messages[0].source.summary, /completed work segment/);
   assert.match(request.messages[0].content[0].text, /<human-input>/);
   service.dispose();
 });

@@ -1,5 +1,7 @@
+import type { ToolResultMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
+export const TURN_MEMORY_CONTINUATION_KIND = 'turn-memory-continuation';
 export const TURN_MEMORY_PLUGIN = 'turn-memory';
 export const TURN_MEMORY_CONTINUATION_PHASE = 'continuation';
 export const TURN_CONTINUATION_TOOL_NAME = 'continue_after_turn_compression';
@@ -9,8 +11,13 @@ export interface TurnContinuationSource {
   fromTurn: number;
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+function isTurnMemoryContinuationSource(source: Record<string, unknown>): boolean {
+  if (source.kind === TURN_MEMORY_CONTINUATION_KIND) return true;
+
+  // DSH 0.1.x sessions recorded the continuation under the shared `plugin` source kind.
+  return source.kind === 'plugin'
+    && source.plugin === TURN_MEMORY_PLUGIN
+    && source.phase === TURN_MEMORY_CONTINUATION_PHASE;
 }
 
 export function continuationSourceFromEvent(
@@ -20,9 +27,7 @@ export function continuationSourceFromEvent(
   const source = event.data.source as Record<string, unknown>;
   const requestId = source.requestId;
   const fromTurn = source.fromTurn;
-  if (source.kind !== 'plugin'
-    || source.plugin !== TURN_MEMORY_PLUGIN
-    || source.phase !== TURN_MEMORY_CONTINUATION_PHASE
+  if (!isTurnMemoryContinuationSource(source)
     || typeof requestId !== 'string'
     || requestId.length === 0
     || typeof fromTurn !== 'number'
@@ -40,17 +45,21 @@ export function nativeContinuationCallId(event: SessionEvent): string | undefine
     : undefined;
 }
 
+function toolResultFailed(message: ToolResultMessage): boolean {
+  if (message.isError === true) return true;
+
+  // DSH 0.1.x kept the outcome inside the `tool-result` content block instead.
+  const block: unknown = message.content[0];
+  return block !== null
+    && typeof block === 'object'
+    && (block as { isError?: unknown }).isError === true;
+}
+
 export function successfulToolResultCallId(event: SessionEvent): string | undefined {
-  if (event.type !== 'tool/result'
-    || event.data.message.source.kind !== 'tool'
-    || typeof event.data.message.source.callId !== 'string') {
-    return undefined;
-  }
-  const block = event.data.message.content.find((candidate: unknown) =>
-    isRecord(candidate) && candidate.type === 'tool-result');
-  return isRecord(block) && block.isError !== true
-    ? event.data.message.source.callId
-    : undefined;
+  if (event.type !== 'tool/result') return undefined;
+  return toolResultFailed(event.data.message)
+    ? undefined
+    : event.data.message.source.callId;
 }
 
 export function successfulCodeContinuationId(event: SessionEvent): string | undefined {

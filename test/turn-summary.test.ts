@@ -44,7 +44,7 @@ test('extracts only the latest completed turn and keeps its interaction order', 
     event(4, 'turn/start', { turn: 2 }),
     user(5, 'Initial requirement'),
     user(6, 'Runtime snapshot', {
-      kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt', form: 'snapshot', sections: [],
+      kind: 'runtime-context', form: 'snapshot', sections: [],
     }),
     assistant(7, 2, 'Mapped the implementation.'),
     user(8, 'Correction from the user'),
@@ -68,9 +68,9 @@ test('extracts only the latest completed turn and keeps its interaction order', 
 test('merges only a verified Turn Memory continuation chain', () => {
   const continuation = (seq: number, fromTurn: number, requestId: string): SessionEvent =>
     user(seq, `automatic continuation from ${fromTurn}`, {
-      kind: 'plugin',
-      plugin: 'turn-memory',
-      phase: 'continuation',
+      kind: 'turn-memory-continuation',
+      form: 'notice',
+      summary: `Continue work after compressing turn ${fromTurn}`,
       requestId,
       fromTurn,
     });
@@ -86,14 +86,11 @@ test('merges only a verified Turn Memory continuation chain', () => {
     step: 1,
     message: {
       id: `result-${callId}`,
-      role: 'user',
+      role: 'tool',
+      toolCallId: callId,
       source: { kind: 'tool', callId },
-      content: [{
-        type: 'tool-result',
-        toolCallId: callId,
-        content: [{ type: 'text', text: 'queued' }],
-        isError: false,
-      }],
+      content: [{ type: 'text', text: 'queued' }],
+      isError: false,
     },
   });
   const events = [
@@ -156,9 +153,9 @@ test('does not merge an unverified continuation source into earlier work', () =>
     event(3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
     event(4, 'turn/start', { turn: 2 }),
     user(5, 'Unverified continuation metadata', {
-      kind: 'plugin',
-      plugin: 'turn-memory',
-      phase: 'continuation',
+      kind: 'turn-memory-continuation',
+      form: 'notice',
+      summary: 'Continue work after compressing turn 1',
       requestId: 'missing-successful-request',
       fromTurn: 1,
     }),
